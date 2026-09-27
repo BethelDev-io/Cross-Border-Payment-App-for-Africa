@@ -460,3 +460,6 @@ MIT
 
 <!-- handsoff-issue-1141 -->
 - #1141: [SC-136] multisig-approval: `execute()` only marks proposals `Expired`, and approved proposals never move funds
+
+<!-- handsoff-issue-1142 -->
+- #1142: [SC-137] multisig-approval: the admin can instantly change signer weights to override quorum, and quorum mixes "count" and "weight" units
