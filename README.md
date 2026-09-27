@@ -463,3 +463,6 @@ MIT
 
 <!-- handsoff-issue-1132 -->
 - #1132: [SC-127] agent-escrow: the sender chooses `fee_bps` (including 0), so the platform fee can be bypassed on every escrow
+
+<!-- handsoff-issue-1135 -->
+- #1135: [SC-130] fee-distributor: `update_fee_rate` stores a value nothing can read, and there are no getters for the fee rate or split
