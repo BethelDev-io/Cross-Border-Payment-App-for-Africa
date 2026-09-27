@@ -466,3 +466,6 @@ MIT
 
 <!-- handsoff-issue-1143 -->
 - #1143: [SC-138] multisig-approval: `reject_quorum_change` can underflow after a signer is removed, and removed signers' votes and weights persist
+
+<!-- handsoff-issue-1144 -->
+- #1144: [SC-139] recurring-payments: each schedule stores an `asset`, but `execute_payment` always pays in the contract-wide token
