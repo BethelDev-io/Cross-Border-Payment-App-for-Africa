@@ -455,3 +455,8 @@ Contributions are welcome. Please ensure:
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-1127 -->
+- #1127: [SC-122] dispute-resolution: `settle_filing_fee` pays out the *current* filing fee, not the fee actually paid when the dispute was opened
