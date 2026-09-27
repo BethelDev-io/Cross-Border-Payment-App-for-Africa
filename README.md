@@ -455,3 +455,8 @@ Contributions are welcome. Please ensure:
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-1129 -->
+- #1129: [SC-124] dispute-resolution: disputes in `UnderAppeal` have no deadline — if the super-arbitrator never acts, funds are locked forever
