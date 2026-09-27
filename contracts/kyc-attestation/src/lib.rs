@@ -28,7 +28,7 @@
 //! - [`DataKey::AttestationByTier`] mirrors the record under the exact tier
 //!   being attested/revoked, so it never clobbers another tier's entry.
 
-use soroban_sdk::{contract, contractimpl, contracttype, bytes, Address, Bytes, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env, Symbol};
 
 mod test;
 
@@ -52,15 +52,6 @@ pub enum DataKey {
 }
 
 // ── Domain types ──────────────────────────────────────────────────────────────
-
-/// Supported KYC tiers for attestation records.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[contracttype]
-pub enum KycTier {
-    Basic,
-    Standard,
-    Premium,
-}
 
 /// On-chain KYC attestation record.
 #[derive(Clone)]
