@@ -4,14 +4,31 @@
 //!
 //! On-chain KYC attestation for AfriPay. Stores a SHA-256 hash of the user's
 //! KYC data — never raw PII. Any Stellar ecosystem participant can call
-//! [`is_verified`] to check a wallet's KYC status without trusting AfriPay's
-//! centralized database.
+//! [`is_valid_and_unexpired`] to check a wallet's KYC status without trusting
+//! AfriPay's centralized database.
 //!
 //! ## Access control
 //! - `attest` and `revoke` — admin only
-//! - `is_verified`         — public
+//! - `is_valid_and_unexpired` — public
+//!
+//! ## Expiry-aware vs. non-expiry-aware checks
+//! - [`is_valid_and_unexpired`] is the **expiry-aware** check: it returns `true`
+//!   only when an attestation exists, has not been revoked, **and** has not
+//!   expired. All fund-gating decisions MUST use this variant.
+//! - [`has_ever_attested`] is the **non-expiry-aware** check: it returns `true`
+//!   when an attestation exists and has not been revoked, **ignoring expiry**.
+//!   It is retained only for historical/audit purposes and MUST NOT be used to
+//!   gate fund-moving actions.
+//!
+//! ## Legacy mirror keys
+//! - [`DataKey::Attestation`] is a legacy, tier-agnostic mirror. It is written
+//!   on every `attest`/`revoke` and therefore reflects the **last written tier**
+//!   only. It MUST NOT be used for any decision; use
+//!   [`DataKey::TieredAttestation`] (via [`is_valid_and_unexpired`]) instead.
+//! - [`DataKey::AttestationByTier`] mirrors the record under the exact tier
+//!   being attested/revoked, so it never clobbers another tier's entry.
 
-use soroban_sdk::{contract, contractimpl, contracttype, bytes, Address, Bytes, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env, Symbol};
 
 mod test;
 
@@ -35,15 +52,6 @@ pub enum DataKey {
 }
 
 // ── Domain types ──────────────────────────────────────────────────────────────
-
-/// Supported KYC tiers for attestation records.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[contracttype]
-pub enum KycTier {
-    Basic,
-    Standard,
-    Premium,
-}
 
 /// On-chain KYC attestation record.
 #[derive(Clone)]
@@ -161,11 +169,14 @@ impl KycAttestationContract {
             last_revoked_at,
         };
         env.storage().persistent().set(&key, &record);
+        // Legacy tier-agnostic mirror: reflects the last written tier only.
+        // MUST NOT be used for decisions — see module docs.
         env.storage()
             .persistent()
             .set(&DataKey::Attestation(user.clone()), &record);
+        // Mirror under the exact tier being attested so other tiers are untouched.
         env.storage().persistent().set(
-            &DataKey::AttestationByTier(user.clone(), KycTier::Basic),
+            &DataKey::AttestationByTier(user.clone(), tier.clone()),
             &record,
         );
 
@@ -206,11 +217,14 @@ impl KycAttestationContract {
         record.last_revoked_at = now;
         record.revocation_count = record.revocation_count.saturating_add(1);
         env.storage().persistent().set(&key, &record);
+        // Legacy tier-agnostic mirror: reflects the last written tier only.
+        // MUST NOT be used for decisions — see module docs.
         env.storage()
             .persistent()
             .set(&DataKey::Attestation(user.clone()), &record);
+        // Mirror under the exact tier being revoked so other tiers are untouched.
         env.storage().persistent().set(
-            &DataKey::AttestationByTier(user.clone(), KycTier::Basic),
+            &DataKey::AttestationByTier(user.clone(), tier.clone()),
             &record,
         );
 
@@ -219,12 +233,17 @@ impl KycAttestationContract {
 
     /// Returns `true` if `user` has a current, non-revoked, non-expired KYC attestation for `tier`.
     ///
+    /// This is the **expiry-aware** check and the canonical entry point for any
+    /// fund-gating decision (e.g. escrow creation). It returns `false` when the
+    /// attestation is missing, has been revoked, or has passed its `expires_at`
+    /// timestamp.
+    ///
     /// Public — any caller may invoke this.
     ///
     /// # Arguments
     /// * `user` — Stellar address to check.
     /// * `tier` — KYC tier to verify.
-    pub fn is_verified(env: Env, user: Address, tier: KycTier) -> bool {
+    pub fn is_valid_and_unexpired(env: Env, user: Address, tier: KycTier) -> bool {
         match env
             .storage()
             .persistent()
@@ -243,23 +262,8 @@ impl KycAttestationContract {
         }
     }
 
-    /// Returns the highest verified tier for `user`, or `None` if no tier is verified.
-    pub fn get_highest_tier(env: Env, user: Address) -> Option<KycTier> {
-        for tier in [KycTier::Business, KycTier::Enhanced, KycTier::Basic] {
-            if Self::is_verified(env.clone(), user.clone(), tier.clone()) {
-                return Some(tier);
-            }
-        }
-        None
-    }
-
-    /// Returns true if user has a current, non-revoked, non-expired attestation for tier.
-    /// Convenience function combining revocation and expiry checks.
-    pub fn is_valid_and_unexpired(env: Env, user: Address, tier: KycTier) -> bool {
-        Self::is_verified(env, user, tier)
-    }
-
-    /// Revoke attestations for multiple users atomically.
+    /// Returns `true` if `user` has ever been attested for `tier` and that
+    /// attestation has not been explicitly revoked — **ignoring expiry**.
     ///
     /// Only the admin may call this. Skips users with no active attestation
     /// rather than panicking, to allow partial-valid batches.
@@ -276,3 +280,13 @@ impl KycAttestationContract {
             for tier in [KycTier::
 
 /* … truncated 3642 chars — edit only what you need near the top … */
+    /// This is the **non-expiry-aware** check. It is retained only for
+    /// historical/audit purposes and MUST NOT be used to gate fund-moving
+    /// actions; use [`is_valid_and_unexpired`] for that instead.
+    ///
+    /// Public — any caller may invoke this.
+    ///
+    /// # Arguments
+    /// * `user` — Ste
+
+/* … truncated 1568 chars — edit only what you need near the top … */
