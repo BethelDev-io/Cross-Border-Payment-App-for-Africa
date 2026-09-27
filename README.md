@@ -455,3 +455,8 @@ Contributions are welcome. Please ensure:
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-1141 -->
+- #1141: [SC-136] multisig-approval: `execute()` only marks proposals `Expired`, and approved proposals never move funds
