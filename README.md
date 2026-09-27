@@ -469,3 +469,29 @@ MIT
 
 <!-- handsoff-issue-1144 -->
 - #1144: [SC-139] recurring-payments: each schedule stores an `asset`, but `execute_payment` always pays in the contract-wide token
+<!-- handsoff-issue-1112 -->
+- #1112: [SC-107] escrow: `batch_create_escrow` is still missing its closing brace — SC-002 (#1034) was closed but the file still does not compile
+
+<!-- handsoff-issue-1113 -->
+- #1113: [SC-108] escrow: `batch_create_escrow` skips the sender/agent KYC checks that `create_escrow` enforces
+<!-- handsoff-issue-1131 -->
+- #1131: [SC-126] dispute-resolution: `resolve_dispute` ignores the resolution deadline and emits no event
+
+<!-- handsoff-issue-1132 -->
+- #1132: [SC-127] agent-escrow: the sender chooses `fee_bps` (including 0), so the platform fee can be bypassed on every escrow
+
+<!-- handsoff-issue-1135 -->
+- #1135: [SC-130] fee-distributor: `update_fee_rate` stores a value nothing can read, and there are no getters for the fee rate or split
+<!-- handsoff-issue-1129 -->
+- #1129: [SC-124] dispute-resolution: disputes in `UnderAppeal` have no deadline — if the super-arbitrator never acts, funds are locked forever
+
+<!-- handsoff-issue-1133 -->
+- #1133: [SC-128] agent-escrow: `insurance_payout` can be called repeatedly for the same cancelled escrow and pays senders who were already refunded
+<!-- handsoff-issue-1127 -->
+- #1127: [SC-122] dispute-resolution: `settle_filing_fee` pays out the *current* filing fee, not the fee actually paid when the dispute was opened
+
+<!-- handsoff-issue-1128 -->
+- #1128: [SC-123] dispute-resolution: `claim_expired` never refunds or settles the filing fee, stranding it in the contract
+
+<!-- handsoff-issue-1130 -->
+- #1130: [SC-125] dispute-resolution: panel quorum is computed against the *current* panel size, so adding/removing arbitrators mid-dispute changes outcomes
