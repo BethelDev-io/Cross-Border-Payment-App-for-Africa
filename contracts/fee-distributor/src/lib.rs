@@ -13,6 +13,8 @@
 //! - `withdraw_fees`         — admin only
 //! - `distribute_agent_pool` — admin only
 //! - `update_split`          — admin only
+//! - `add_fee_token`         — admin only
+//! - `remove_fee_token`      — admin only
 //!
 //! ## Agent pool lifecycle
 //! Each `deposit_fee` splits the deposit into a platform portion
@@ -24,6 +26,14 @@
 //! path for the agent pool: funds can only leave it to the agent addresses
 //! supplied by the admin.  Every outbound transfer (`withdraw_fees` and
 //! `distribute_agent_pool`) panics while the contract is `Paused`.
+//!
+//! ## Fee-token allow-list (SC-132)
+//! `deposit_fee` is permissionless, so it only accepts tokens the admin has
+//! explicitly allow-listed via `add_fee_token`.  Registration is O(1): each
+//! token is stored under its own `TokenRegistered(Address)` key rather than
+//! loading and rewriting a whole `TokenList` vector on every deposit.  This
+//! prevents an attacker from growing unbounded state (and the per-deposit cost)
+//! by depositing throwaway SEP-41 tokens.
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, token, vec, Address, Env, Symbol, Vec,
@@ -65,6 +75,10 @@ pub enum DataKey {
     TokenList,
     /// Whether the contract is currently paused.
     Paused,
+    /// SC-132: O(1) per-token registration flag.  Set when a token is added to
+    /// the admin-managed fee-token allow-list.  Replaces the O(n) `TokenList`
+    /// scan/rewrite that `deposit_fee` used to perform on every call.
+    TokenRegistered(Address),
 }
 
 // ── Event payloads ────────────────────────────────────────────────────────────
@@ -119,24 +133,53 @@ pub struct EvtSplitUpdated {
     pub new_split_bps: u32,
 }
 
+/// SC-132: Emitted when the admin adds a token to the fee-token allow-list.
+#[derive(Clone)]
+#[contracttype]
+pub struct EvtFeeTokenAdded {
+    pub admin: Address,
+    pub token: Address,
+}
+
+/// SC-132: Emitted when the admin removes a token from the fee-token allow-list.
+#[derive(Clone)]
+#[contracttype]
+pub struct EvtFeeTokenRemoved {
+    pub admin: Address,
+    pub token: Address,
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-/// Append `token` to the on-chain `TokenList` if it is not already present.
-/// This is O(n) in the number of distinct tokens, which is expected to be small.
-// SC-016 fix: `register_token` was missing its closing brace.
-// The `if !list.contains(token) { ... }` inner block was correctly closed but
-// the function itself was never closed.  Added `}` after the inner block.
+/// SC-132: Register `token` in the fee-token allow-list in O(1) storage
+/// reads/writes.  Each token is stored under its own `TokenRegistered(Address)`
+/// key, so the cost of this call does not grow with the number of registered
+/// tokens.  The `TokenList` vector is only appended to when the token is new,
+/// and is never scanned on the deposit hot path.
 fn register_token(env: &Env, token: &Address) {
+    let key = DataKey::TokenRegistered(token.clone());
+    if env.storage().persistent().has(&key) {
+        return;
+    }
+    env.storage().persistent().set(&key, &true);
+
+    // Maintain the enumeration list for `get_all_accumulated_fees`.  This is
+    // only touched when a genuinely new token is registered (admin-gated), so
+    // it cannot be grown by an unprivileged depositor.
     let mut list: Vec<Address> = env
         .storage()
         .persistent()
         .get(&DataKey::TokenList)
         .unwrap_or_else(|| vec![env]);
+    list.push_back(token.clone());
+    env.storage().persistent().set(&DataKey::TokenList, &list);
+}
 
-    if !list.contains(token) {
-        list.push_back(token.clone());
-        env.storage().persistent().set(&DataKey::TokenList, &list);
-    }
+/// SC-132: Returns true when `token` is on the admin-managed allow-list.
+fn is_registered(env: &Env, token: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .has(&DataKey::TokenRegistered(token.clone()))
 }
 
 #[derive(Clone)]
@@ -187,6 +230,55 @@ impl FeeDistributorContract {
         env.storage().persistent().set(&DataKey::TokenList, &empty);
     }
 
+    /// SC-132: Add `token` to the admin-managed fee-token allow-list.
+    ///
+    /// Only allow-listed tokens may be deposited via `deposit_fee`.  This is
+    /// O(1) in storage reads/writes regardless of how many tokens are already
+    /// registered.  Idempotent: re-adding an existing token is a no-op.
+    pub fn add_fee_token(env: Env, token: Address) {
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        admin.require_auth();
+
+        if is_registered(&env, &token) {
+            return;
+        }
+        register_token(&env, &token);
+        env.events().publish(
+            (Symbol::new(&env, "fee_token_added"),),
+            EvtFeeTokenAdded { admin, token },
+        );
+    }
+
+    /// SC-132: Remove `token` from the admin-managed fee-token allow-list.
+    ///
+    /// After removal, `deposit_fee` rejects the token.  Existing accumulated
+    /// balances remain withdrawable by the admin.  O(1) in storage reads/writes.
+    pub fn remove_fee_token(env: Env, token: Address) {
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        admin.require_auth();
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::TokenRegistered(token.clone()));
+        env.events().publish(
+            (Symbol::new(&env, "fee_token_removed"),),
+            EvtFeeTokenRemoved { admin, token },
+        );
+    }
+
+    /// SC-132: Returns true when `token` is on the fee-token allow-list.
+    pub fn is_fee_token(env: Env, token: Address) -> bool {
+        is_registered(&env, &token)
+    }
+
     /// Deposit a platform fee into the contract for a specific token.
     ///
     /// Transfers `amount` of `token` from `depositor` into the contract and
@@ -194,6 +286,10 @@ impl FeeDistributorContract {
     /// (`AccumulatedFees(token)`) and the agent reward pool
     /// (`AgentPoolFees(token)`) according to the current `split_bps`.
     /// Emits a `FeeDeposited` event where `total` reflects the platform portion.
+    ///
+    /// SC-132: `token` must be on the admin-managed allow-list; deposits of
+    /// unlisted tokens are rejected.  The allow-list check is O(1) and does not
+    /// grow with the number of registered tokens.
     ///
     /// # Arguments
     /// * `depositor` — Address sending the fee (must authorise this call).
@@ -214,294 +310,12 @@ impl FeeDistributorContract {
             panic!("amount exceeds maximum deposit limit");
         }
 
+        // SC-132: reject tokens that are not on the admin-managed allow-list.
+        if !is_registered(&env, &token) {
+            panic!("token not on fee allow-list");
+        }
+
         if env.storage().persistent().get(&DataKey::Paused).unwrap_or(false) {
-            panic!("Contract is paused");
-        }
+        
 
-        depositor.require_auth();
-
-        // Transfer the full amount from the depositor to this contract.
-        token::Client::new(&env, &token).transfer(
-            &depositor,
-            &env.current_contract_address(),
-            &amount,
-        );
-
-        // Compute the agent-pool portion and the platform portion.
-        let split_bps: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::SplitBps)
-            .unwrap_or(0);
-
-        let agent_portion: i128 = amount * (split_bps as i128) / 10_000;
-        let platform_portion: i128 = amount - agent_portion;
-
-        // Update per-token platform treasury.
-        let total: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::AccumulatedFees(token.clone()))
-            .unwrap_or(0)
-            + platform_portion;
-        env.storage()
-            .persistent()
-            .set(&DataKey::AccumulatedFees(token.clone()), &total);
-
-        // Update per-token agent reward pool.
-        let pool: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::AgentPoolFees(token.clone()))
-            .unwrap_or(0)
-            + agent_portion;
-        env.storage()
-            .persistent()
-            .set(&DataKey::AgentPoolFees(token.clone()), &pool);
-
-        register_token(&env, &token);
-
-        env.events().publish(
-            (Symbol::new(&env, "FeeDeposited"), depositor.clone()),
-            EvtFeeDeposited {
-                depositor,
-                token,
-                amount,
-                total,
-                source,
-            },
-        );
-    }
-
-    /// Withdraw accumulated platform fees to the admin.
-    ///
-    /// Panics while the contract is paused.
-    pub fn withdraw_fees(env: Env, admin: Address, token: Address, amount: i128) {
-        if env.storage().persistent().get(&DataKey::Paused).unwrap_or(false) {
-            panic!("Contract is paused");
-        }
-
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("not initialized");
-        if admin != stored_admin {
-            panic!("unauthorized");
-        }
-        admin.require_auth();
-
-        if amount <= 0 {
-            panic!("amount must be positive");
-        }
-
-        let current: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::AccumulatedFees(token.clone()))
-            .unwrap_or(0);
-        if amount > current {
-            panic!("insufficient accumulated fees");
-        }
-
-        let remaining = current - amount;
-        env.storage()
-            .persistent()
-            .set(&DataKey::AccumulatedFees(token.clone()), &remaining);
-
-        token::Client::new(&env, &token).transfer(
-            &env.current_contract_address(),
-            &admin,
-            &amount,
-        );
-
-        env.events().publish(
-            (Symbol::new(&env, "FeesWithdrawn"), admin.clone()),
-            EvtFeesWithdrawn {
-                admin,
-                token,
-                amount,
-                remaining,
-                timestamp: env.ledger().timestamp(),
-            },
-        );
-    }
-
-    /// Distribute agent-pool funds to individual agent addresses.
-    ///
-    /// The admin supplies a list of `(agent, amount)` pairs; each amount is
-    /// transferred from the contract to the corresponding agent address and an
-    /// `AgentPoolDistributed` event is emitted per recipient.  This replaces the
-    /// old admin self-withdraw path so the agent pool can no longer be drained
-    /// to the admin's own address.
-    ///
-    /// Panics while the contract is paused.
-    ///
-    /// # Arguments
-    /// * `admin`        — Must be the stored admin and authorise this call.
-    /// * `token`        — Asset contract address for the pool token.
-    /// * `recipients`   — `(agent, amount)` pairs; each amount must be > 0.
-    pub fn distribute_agent_pool(
-        env: Env,
-        admin: Address,
-        token: Address,
-        recipients: Vec<(Address, i128)>,
-    ) {
-        if env.storage().persistent().get(&DataKey::Paused).unwrap_or(false) {
-            panic!("Contract is paused");
-        }
-
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("not initialized");
-        if admin != stored_admin {
-            panic!("unauthorized");
-        }
-        admin.require_auth();
-
-        if recipients.is_empty() {
-            panic!("recipients must not be empty");
-        }
-
-        let mut pool: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::AgentPoolFees(token.clone()))
-            .unwrap_or(0);
-
-        let token_client = token::Client::new(&env, &token);
-        let contract = env.current_contract_address();
-
-        for (agent, amount) in recipients.iter() {
-            if amount <= 0 {
-                panic!("amount must be positive");
-            }
-            if amount > pool {
-                panic!("insufficient agent pool fees");
-            }
-
-            pool -= amount;
-
-            token_client.transfer(&contract, &agent, &amount);
-
-            env.events().publish(
-                (Symbol::new(&env, "AgentPoolDistributed"), agent.clone()),
-                EvtAgentPoolDistributed {
-                    admin: admin.clone(),
-                    token: token.clone(),
-                    agent,
-                    amount,
-                    remaining: pool,
-                    timestamp: env.ledger().timestamp(),
-                },
-            );
-        }
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::AgentPoolFees(token.clone()), &pool);
-    }
-
-    /// Read the accumulated platform fees for a token.
-    pub fn get_accumulated_fees(env: Env, token: Address) -> i128 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::AccumulatedFees(token))
-            .unwrap_or(0)
-    }
-
-    /// Read the accumulated agent-pool fees for a token.
-    pub fn get_agent_pool_fees(env: Env, token: Address) -> i128 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::AgentPoolFees(token))
-            .unwrap_or(0)
-    }
-
-    /// Update the agent-pool split ratio. Admin only.
-    pub fn update_split(env: Env, admin: Address, new_split_bps: u32) {
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("not initialized");
-        if admin != stored_admin {
-            panic!("unauthorized");
-        }
-        admin.require_auth();
-
-        if new_split_bps > 5000 {
-            panic!("split_bps exceeds maximum of 5000");
-        }
-
-        let old_split_bps: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::SplitBps)
-            .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&DataKey::SplitBps, &new_split_bps);
-
-        env.events().publish(
-            (Symbol::new(&env, "SplitUpdated"), admin.clone()),
-            EvtSplitUpdated {
-                old_split_bps,
-                new_split_bps,
-            },
-        );
-    }
-
-    /// Pause the contract. Admin only.
-    pub fn pause(env: Env, admin: Address) {
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("not initialized");
-        if admin != stored_admin {
-            panic!("unauthorized");
-        }
-        admin.require_auth();
-
-        env.storage().persistent().set(&DataKey::Paused, &true);
-
-        env.events().publish(
-            (Symbol::new(&env, "ContractPaused"), admin.clone()),
-            EvtContractPaused {
-                admin,
-                paused_at: env.ledger().timestamp(),
-            },
-        );
-    }
-
-    /// Unpause the contract. Admin only.
-    pub fn unpause(env: Env, admin: Address) {
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("not initialized");
-        if admin != stored_admin {
-            panic!("unauthorized");
-        }
-        admin.require_auth();
-
-        env.storage().persistent().set(&DataKey::Paused, &false);
-
-        env.events().publish(
-            (Symbol::new(&env, "ContractUnpaused"), admin.clone()),
-            EvtContractUnpaused {
-                admin,
-                unpaused_at: env.ledger().timestamp(),
-            },
-        );
-    }
-
-    /// Whether the contract is currently paused.
-    pub fn is_paused(env: Env) -> bool {
-        env.storage().persistent().get(&DataKey::Paused).unwrap_or(false)
-    }
-}
+/* … truncated 8814 chars — edit only what you need near the top … */
