@@ -463,3 +463,6 @@ MIT
 
 <!-- handsoff-issue-1142 -->
 - #1142: [SC-137] multisig-approval: the admin can instantly change signer weights to override quorum, and quorum mixes "count" and "weight" units
+
+<!-- handsoff-issue-1143 -->
+- #1143: [SC-138] multisig-approval: `reject_quorum_change` can underflow after a signer is removed, and removed signers' votes and weights persist
