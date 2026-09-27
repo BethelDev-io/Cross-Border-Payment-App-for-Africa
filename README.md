@@ -460,3 +460,6 @@ MIT
 
 <!-- handsoff-issue-1123 -->
 - #1123: [SC-118] escrow: `expire_escrow` refunds the sender even after the agent has called `confirm_delivery`, and leaves `updated_at` stale
+
+<!-- handsoff-issue-1124 -->
+- #1124: [SC-119] escrow: `deposit` bypasses `MAX_ESCROW_AMOUNT`, is allowed after delivery confirmation, and accepts deposits from any address
