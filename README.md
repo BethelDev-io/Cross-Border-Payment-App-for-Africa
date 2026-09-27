@@ -458,6 +458,11 @@ MIT
 
 ## Handsoff notes
 
+<!-- handsoff-issue-1112 -->
+- #1112: [SC-107] escrow: `batch_create_escrow` is still missing its closing brace — SC-002 (#1034) was closed but the file still does not compile
+
+<!-- handsoff-issue-1113 -->
+- #1113: [SC-108] escrow: `batch_create_escrow` skips the sender/agent KYC checks that `create_escrow` enforces
 <!-- handsoff-issue-1131 -->
 - #1131: [SC-126] dispute-resolution: `resolve_dispute` ignores the resolution deadline and emits no event
 
