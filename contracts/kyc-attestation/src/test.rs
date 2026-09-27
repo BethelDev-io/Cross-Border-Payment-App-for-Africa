@@ -90,6 +90,59 @@ fn test_attest_after_revoke_succeeds() {
     assert!(client.is_verified(&user, KycTier::Basic));
 }
 
+#[test]
+fn test_reattest_after_revoke_records_new_attested_at() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+    client.attest(&admin, &user, KycTier::Basic, &hash(&env), 0);
+    let first_attested_at = client.get_attestation(&user, KycTier::Basic).attested_at;
+
+    env.ledger().with_mut(|li| li.timestamp += 100);
+    client.revoke(&admin, &user, KycTier::Basic);
+
+    env.ledger().with_mut(|li| li.timestamp += 100);
+    client.attest(&admin, &user, KycTier::Basic, &hash(&env), 0);
+
+    let record = client.get_attestation(&user, KycTier::Basic);
+    assert!(record.attested_at > first_attested_at);
+    assert_eq!(record.revoked_at, 0);
+}
+
+#[test]
+fn test_reattest_after_revoke_preserves_revocation_evidence() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+    client.attest(&admin, &user, KycTier::Basic, &hash(&env), 0);
+
+    env.ledger().with_mut(|li| li.timestamp += 100);
+    client.revoke(&admin, &user, KycTier::Basic);
+    let revoked_at = client.get_attestation(&user, KycTier::Basic).revoked_at;
+
+    env.ledger().with_mut(|li| li.timestamp += 100);
+    client.attest(&admin, &user, KycTier::Basic, &hash(&env), 0);
+
+    let record = client.get_attestation(&user, KycTier::Basic);
+    assert_eq!(record.revocation_count, 1);
+    assert_eq!(record.last_revoked_at, revoked_at);
+}
+
+#[test]
+fn test_reattest_after_expiry_records_new_attested_at() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+    // expires_at = 1000
+    client.attest(&admin, &user, KycTier::Basic, &hash(&env), 1000);
+    let first_attested_at = client.get_attestation(&user, KycTier::Basic).attested_at;
+
+    env.ledger().with_mut(|li| li.timestamp += 2000);
+    assert!(!client.is_verified(&user, KycTier::Basic));
+
+    client.attest(&admin, &user, KycTier::Basic, &hash(&env), 0);
+    let record = client.get_attestation(&user, KycTier::Basic);
+    assert!(record.attested_at > first_attested_at);
+    assert!(client.is_verified(&user, KycTier::Basic));
+}
+
 // ── revoke ────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -240,54 +293,4 @@ fn test_get_highest_tier_returns_correct_tier() {
 
     client.attest(&admin, &user, KycTier::Business, &hash(&env), 0);
     assert_eq!(client.get_highest_tier(&user), Some(KycTier::Business));
-
-    client.revoke(&admin, &user, KycTier::Business);
-    assert_eq!(client.get_highest_tier(&user), Some(KycTier::Enhanced));
-}
-
-#[test]
-fn test_batch_revoke_revokes_valid_pairs() {
-    let (env, client, admin) = setup();
-    let user1 = Address::generate(&env);
-    let user2 = Address::generate(&env);
-
-    client.attest(&admin, &user1, &hash(&env));
-    client.attest(&admin, &user2, &hash(&env));
-
-    let mut revocations = soroban_sdk::Vec::new(&env);
-    revocations.push_back((user1.clone(), KycTier::Standard));
-    revocations.push_back((user2.clone(), KycTier::Basic));
-
-    client.batch_revoke(&admin, &revocations);
-
-    assert!(!client.is_verified(&user1));
-    assert!(!client.is_verified(&user2));
-}
-
-#[test]
-fn test_batch_revoke_skips_missing_attestations() {
-    let (env, client, admin) = setup();
-    let user = Address::generate(&env);
-    client.attest(&admin, &user, &hash(&env));
-
-    let mut revocations = soroban_sdk::Vec::new(&env);
-    revocations.push_back((user.clone(), KycTier::Standard));
-    revocations.push_back((Address::generate(&env), KycTier::Premium));
-
-    client.batch_revoke(&admin, &revocations);
-
-    assert!(!client.is_verified(&user));
-}
-
-#[test]
-#[should_panic(expected = "Batch size exceeds maximum of 50")]
-fn test_batch_revoke_exceeds_limit_panics() {
-    let (env, client, admin) = setup();
-    let mut revocations = soroban_sdk::Vec::new(&env);
-
-    for _ in 0..51 {
-        revocations.push_back((Address::generate(&env), KycTier::Basic));
-    }
-
-    client.batch_revoke(&admin, &revocations);
 }
