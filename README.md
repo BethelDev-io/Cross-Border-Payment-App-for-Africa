@@ -455,3 +455,8 @@ Contributions are welcome. Please ensure:
 ## License
 
 MIT
+
+## Handsoff notes
+
+<!-- handsoff-issue-1131 -->
+- #1131: [SC-126] dispute-resolution: `resolve_dispute` ignores the resolution deadline and emits no event
