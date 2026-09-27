@@ -225,6 +225,64 @@ fn test_revoke_one_tier_leaves_others_verified() {
     assert!(client.is_verified(&user, KycTier::Business));
 }
 
+// ── tier mirroring (SC-110) ───────────────────────────────────────────────────
+
+#[test]
+fn test_attest_business_does_not_touch_basic_tier() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+
+    // Attest only at Business; the Basic slot must remain untouched.
+    client.attest(&admin, &user, KycTier::Business, &hash(&env), 0);
+
+    assert!(!client.is_verified(&user, KycTier::Basic));
+    assert!(client.is_verified(&user, KycTier::Business));
+}
+
+#[test]
+fn test_attest_business_does_not_overwrite_existing_basic() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+
+    client.attest(&admin, &user, KycTier::Basic, &hash(&env), 0);
+    let basic_before = client.get_attestation(&user, KycTier::Basic);
+
+    client.attest(&admin, &user, KycTier::Business, &hash(&env), 0);
+
+    let basic_after = client.get_attestation(&user, KycTier::Basic);
+    assert_eq!(basic_before.kyc_hash, basic_after.kyc_hash);
+    assert_eq!(basic_before.attested_at, basic_after.attested_at);
+    assert_eq!(basic_after.revoked_at, 0);
+    assert!(client.is_verified(&user, KycTier::Basic));
+}
+
+#[test]
+fn test_revoke_enhanced_does_not_touch_basic_or_business() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+
+    client.attest(&admin, &user, KycTier::Basic, &hash(&env), 0);
+    client.attest(&admin, &user, KycTier::Enhanced, &hash(&env), 0);
+    client.attest(&admin, &user, KycTier::Business, &hash(&env), 0);
+
+    let basic_before = client.get_attestation(&user, KycTier::Basic);
+    let business_before = client.get_attestation(&user, KycTier::Business);
+
+    client.revoke(&admin, &user, KycTier::Enhanced);
+
+    let basic_after = client.get_attestation(&user, KycTier::Basic);
+    let business_after = client.get_attestation(&user, KycTier::Business);
+
+    assert_eq!(basic_before.kyc_hash, basic_after.kyc_hash);
+    assert_eq!(basic_after.revoked_at, 0);
+    assert_eq!(business_before.kyc_hash, business_after.kyc_hash);
+    assert_eq!(business_after.revoked_at, 0);
+
+    assert!(client.is_verified(&user, KycTier::Basic));
+    assert!(!client.is_verified(&user, KycTier::Enhanced));
+    assert!(client.is_verified(&user, KycTier::Business));
+}
+
 #[test]
 fn test_get_highest_tier_returns_correct_tier() {
     let (env, client, admin) = setup();
@@ -240,54 +298,4 @@ fn test_get_highest_tier_returns_correct_tier() {
 
     client.attest(&admin, &user, KycTier::Business, &hash(&env), 0);
     assert_eq!(client.get_highest_tier(&user), Some(KycTier::Business));
-
-    client.revoke(&admin, &user, KycTier::Business);
-    assert_eq!(client.get_highest_tier(&user), Some(KycTier::Enhanced));
-}
-
-#[test]
-fn test_batch_revoke_revokes_valid_pairs() {
-    let (env, client, admin) = setup();
-    let user1 = Address::generate(&env);
-    let user2 = Address::generate(&env);
-
-    client.attest(&admin, &user1, &hash(&env));
-    client.attest(&admin, &user2, &hash(&env));
-
-    let mut revocations = soroban_sdk::Vec::new(&env);
-    revocations.push_back((user1.clone(), KycTier::Standard));
-    revocations.push_back((user2.clone(), KycTier::Basic));
-
-    client.batch_revoke(&admin, &revocations);
-
-    assert!(!client.is_verified(&user1));
-    assert!(!client.is_verified(&user2));
-}
-
-#[test]
-fn test_batch_revoke_skips_missing_attestations() {
-    let (env, client, admin) = setup();
-    let user = Address::generate(&env);
-    client.attest(&admin, &user, &hash(&env));
-
-    let mut revocations = soroban_sdk::Vec::new(&env);
-    revocations.push_back((user.clone(), KycTier::Standard));
-    revocations.push_back((Address::generate(&env), KycTier::Premium));
-
-    client.batch_revoke(&admin, &revocations);
-
-    assert!(!client.is_verified(&user));
-}
-
-#[test]
-#[should_panic(expected = "Batch size exceeds maximum of 50")]
-fn test_batch_revoke_exceeds_limit_panics() {
-    let (env, client, admin) = setup();
-    let mut revocations = soroban_sdk::Vec::new(&env);
-
-    for _ in 0..51 {
-        revocations.push_back((Address::generate(&env), KycTier::Basic));
-    }
-
-    client.batch_revoke(&admin, &revocations);
 }

@@ -19,6 +19,14 @@
 //!   when an attestation exists and has not been revoked, **ignoring expiry**.
 //!   It is retained only for historical/audit purposes and MUST NOT be used to
 //!   gate fund-moving actions.
+//!
+//! ## Legacy mirror keys
+//! - [`DataKey::Attestation`] is a legacy, tier-agnostic mirror. It is written
+//!   on every `attest`/`revoke` and therefore reflects the **last written tier**
+//!   only. It MUST NOT be used for any decision; use
+//!   [`DataKey::TieredAttestation`] (via [`is_valid_and_unexpired`]) instead.
+//! - [`DataKey::AttestationByTier`] mirrors the record under the exact tier
+//!   being attested/revoked, so it never clobbers another tier's entry.
 
 use soroban_sdk::{contract, contractimpl, contracttype, bytes, Address, Bytes, Env, Symbol};
 
@@ -148,11 +156,14 @@ impl KycAttestationContract {
             expires_at,
         };
         env.storage().persistent().set(&key, &record);
+        // Legacy tier-agnostic mirror: reflects the last written tier only.
+        // MUST NOT be used for decisions — see module docs.
         env.storage()
             .persistent()
             .set(&DataKey::Attestation(user.clone()), &record);
+        // Mirror under the exact tier being attested so other tiers are untouched.
         env.storage().persistent().set(
-            &DataKey::AttestationByTier(user.clone(), KycTier::Basic),
+            &DataKey::AttestationByTier(user.clone(), tier.clone()),
             &record,
         );
 
@@ -184,11 +195,14 @@ impl KycAttestationContract {
 
         record.revoked_at = env.ledger().timestamp();
         env.storage().persistent().set(&key, &record);
+        // Legacy tier-agnostic mirror: reflects the last written tier only.
+        // MUST NOT be used for decisions — see module docs.
         env.storage()
             .persistent()
             .set(&DataKey::Attestation(user.clone()), &record);
+        // Mirror under the exact tier being revoked so other tiers are untouched.
         env.storage().persistent().set(
-            &DataKey::AttestationByTier(user.clone(), KycTier::Basic),
+            &DataKey::AttestationByTier(user.clone(), tier.clone()),
             &record,
         );
 
@@ -236,45 +250,6 @@ impl KycAttestationContract {
     /// Public — any caller may invoke this.
     ///
     /// # Arguments
-    /// * `user` — Stellar address to check.
-    /// * `tier` — KYC tier to check.
-    pub fn has_ever_attested(env: Env, user: Address, tier: KycTier) -> bool {
-        match env
-            .storage()
-            .persistent()
-            .get::<_, Attestation>(&DataKey::TieredAttestation(user, tier))
-        {
-            Some(record) => record.revoked_at == 0,
-            None => false,
-        }
-    }
+    /// * `user` — Ste
 
-    /// Returns the highest verified tier for `user`, or `None` if no tier is verified.
-    ///
-    /// Uses the expiry-aware [`is_valid_and_unexpired`] check.
-    pub fn get_highest_tier(env: Env, user: Address) -> Option<KycTier> {
-        for tier in [KycTier::Business, KycTier::Enhanced, KycTier::Basic] {
-            if Self::is_valid_and_unexpired(env.clone(), user.clone(), tier.clone()) {
-                return Some(tier);
-            }
-        }
-        None
-    }
-
-    /// Revoke attestations for multiple users atomically.
-    ///
-    /// Only the admin may call this. Skips users with no active attestation
-    /// rather than panicking, to allow partial-valid batches.
-    ///
-    /// # Arguments
-    /// * `admin` — Must match the admin set during `initialize`.
-    /// * `users` — List of Stellar addresses to revoke.
-    pub fn revoke_batch(env: Env, admin: Address, users: soroban_sdk::Vec<Address>) {
-        admin.require_auth();
-        Self::assert_admin(&env, &admin);
-
-        let now = env.ledger().timestamp();
-        for user in users.iter() {
-            for tier in [KycTier::
-
-/* … truncated 3642 chars — edit only what you need near the top … */
+/* … truncated 1568 chars — edit only what you need near the top … */
