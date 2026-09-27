@@ -460,3 +460,6 @@ MIT
 
 <!-- handsoff-issue-1129 -->
 - #1129: [SC-124] dispute-resolution: disputes in `UnderAppeal` have no deadline — if the super-arbitrator never acts, funds are locked forever
+
+<!-- handsoff-issue-1133 -->
+- #1133: [SC-128] agent-escrow: `insurance_payout` can be called repeatedly for the same cancelled escrow and pays senders who were already refunded
