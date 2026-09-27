@@ -460,3 +460,6 @@ MIT
 
 <!-- handsoff-issue-1127 -->
 - #1127: [SC-122] dispute-resolution: `settle_filing_fee` pays out the *current* filing fee, not the fee actually paid when the dispute was opened
+
+<!-- handsoff-issue-1128 -->
+- #1128: [SC-123] dispute-resolution: `claim_expired` never refunds or settles the filing fee, stranding it in the contract
