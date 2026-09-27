@@ -458,6 +458,17 @@ MIT
 
 ## Handsoff notes
 
+<!-- handsoff-issue-1141 -->
+- #1141: [SC-136] multisig-approval: `execute()` only marks proposals `Expired`, and approved proposals never move funds
+
+<!-- handsoff-issue-1142 -->
+- #1142: [SC-137] multisig-approval: the admin can instantly change signer weights to override quorum, and quorum mixes "count" and "weight" units
+
+<!-- handsoff-issue-1143 -->
+- #1143: [SC-138] multisig-approval: `reject_quorum_change` can underflow after a signer is removed, and removed signers' votes and weights persist
+
+<!-- handsoff-issue-1144 -->
+- #1144: [SC-139] recurring-payments: each schedule stores an `asset`, but `execute_payment` always pays in the contract-wide token
 <!-- handsoff-issue-1112 -->
 - #1112: [SC-107] escrow: `batch_create_escrow` is still missing its closing brace — SC-002 (#1034) was closed but the file still does not compile
 
