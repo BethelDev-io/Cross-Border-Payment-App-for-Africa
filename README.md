@@ -463,3 +463,6 @@ MIT
 
 <!-- handsoff-issue-1128 -->
 - #1128: [SC-123] dispute-resolution: `claim_expired` never refunds or settles the filing fee, stranding it in the contract
+
+<!-- handsoff-issue-1130 -->
+- #1130: [SC-125] dispute-resolution: panel quorum is computed against the *current* panel size, so adding/removing arbitrators mid-dispute changes outcomes
