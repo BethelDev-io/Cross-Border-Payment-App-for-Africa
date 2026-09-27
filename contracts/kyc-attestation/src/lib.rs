@@ -67,6 +67,11 @@ pub struct Attestation {
     /// Unix ledger timestamp after which the attestation is considered expired.
     /// 0 means the attestation never expires.
     pub expires_at: u64,
+    /// Number of times this attestation has been revoked. Preserves evidence
+    /// of prior revocations across re-attestations.
+    pub revocation_count: u32,
+    /// Unix timestamp of the most recent revocation, or 0 if never revoked.
+    pub last_revoked_at: u64,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -105,7 +110,10 @@ impl KycAttestationContract {
     /// Record a KYC attestation for `user`.
     ///
     /// Only the admin may call this. Panics if the user already has an active
-    /// (non-revoked) attestation.
+    /// (non-revoked, non-expired) attestation. Re-attesting a revoked or
+    /// expired attestation is allowed: it records a fresh `attested_at`,
+    /// preserves the prior revocation evidence (`revocation_count`,
+    /// `last_revoked_at`) and emits a distinct `KycRenewed` event.
     ///
     /// # Arguments
     /// * `admin`      — Must match the admin set during `initialize`.
@@ -127,24 +135,38 @@ impl KycAttestationContract {
         if kyc_hash.len() == 0 {
             panic!("kyc_hash must not be empty");
         }
-        if expires_at != 0 && expires_at <= env.ledger().timestamp() {
+        let now = env.ledger().timestamp();
+        if expires_at != 0 && expires_at <= now {
             panic!("expires_at must be greater than current timestamp");
         }
 
         let key = DataKey::TieredAttestation(user.clone(), tier.clone());
 
-        // Allow re-attestation: update existing attestation if present
-        let original_attested_at = if let Some(existing) = env.storage().persistent().get::<_, Attestation>(&key) {
-            existing.attested_at
-        } else {
-            0
-        };
+        // Re-attestation is only permitted when the existing attestation is no
+        // longer active (revoked or expired). An active attestation must be
+        // explicitly revoked first.
+        let (revocation_count, last_revoked_at, is_renewal) =
+            if let Some(existing) = env.storage().persistent().get::<_, Attestation>(&key) {
+                let expired = existing.expires_at != 0 && now > existing.expires_at;
+                if existing.revoked_at == 0 && !expired {
+                    panic!("user already has an active attestation");
+                }
+                (
+                    existing.revocation_count,
+                    existing.last_revoked_at,
+                    true,
+                )
+            } else {
+                (0, 0, false)
+            };
 
         let record = Attestation {
             kyc_hash,
-            attested_at: if original_attested_at > 0 { original_attested_at } else { env.ledger().timestamp() },
+            attested_at: now,
             revoked_at: 0,
             expires_at,
+            revocation_count,
+            last_revoked_at,
         };
         env.storage().persistent().set(&key, &record);
         // Legacy tier-agnostic mirror: reflects the last written tier only.
@@ -158,7 +180,13 @@ impl KycAttestationContract {
             &record,
         );
 
-        env.events().publish((Symbol::new(&env, "KycAttested"),), (user, tier));
+        if is_renewal {
+            env.events()
+                .publish((Symbol::new(&env, "KycRenewed"),), (user, tier));
+        } else {
+            env.events()
+                .publish((Symbol::new(&env, "KycAttested"),), (user, tier));
+        }
     }
 
     /// Revoke an existing attestation for `user` and `tier`.
@@ -184,7 +212,10 @@ impl KycAttestationContract {
             panic!("attestation already revoked");
         }
 
-        record.revoked_at = env.ledger().timestamp();
+        let now = env.ledger().timestamp();
+        record.revoked_at = now;
+        record.last_revoked_at = now;
+        record.revocation_count = record.revocation_count.saturating_add(1);
         env.storage().persistent().set(&key, &record);
         // Legacy tier-agnostic mirror: reflects the last written tier only.
         // MUST NOT be used for decisions — see module docs.
@@ -216,7 +247,7 @@ impl KycAttestationContract {
         match env
             .storage()
             .persistent()
-            .get::<_, Attestation>(&DataKey::TieredAttestation(user, tier))
+            .get::<_, Attestation>(DataKey::TieredAttestation(user, tier))
         {
             Some(record) => {
                 if record.revoked_at != 0 {
@@ -234,6 +265,21 @@ impl KycAttestationContract {
     /// Returns `true` if `user` has ever been attested for `tier` and that
     /// attestation has not been explicitly revoked — **ignoring expiry**.
     ///
+    /// Only the admin may call this. Skips users with no active attestation
+    /// rather than panicking, to allow partial-valid batches.
+    ///
+    /// # Arguments
+    /// * `admin` — Must match the admin set during `initialize`.
+    /// * `users` — List of Stellar addresses to revoke.
+    pub fn revoke_batch(env: Env, admin: Address, users: soroban_sdk::Vec<Address>) {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin);
+
+        let now = env.ledger().timestamp();
+        for user in users.iter() {
+            for tier in [KycTier::
+
+/* … truncated 3642 chars — edit only what you need near the top … */
     /// This is the **non-expiry-aware** check. It is retained only for
     /// historical/audit purposes and MUST NOT be used to gate fund-moving
     /// actions; use [`is_valid_and_unexpired`] for that instead.

@@ -458,6 +458,14 @@ MIT
 
 ## Handsoff notes
 
+<!-- handsoff-issue-1123 -->
+- #1123: [SC-118] escrow: `expire_escrow` refunds the sender even after the agent has called `confirm_delivery`, and leaves `updated_at` stale
+
+<!-- handsoff-issue-1124 -->
+- #1124: [SC-119] escrow: `deposit` bypasses `MAX_ESCROW_AMOUNT`, is allowed after delivery confirmation, and accepts deposits from any address
+
+<!-- handsoff-issue-1125 -->
+- #1125: [SC-120] No contract supports admin key rotation (except agent-escrow's unauthenticated one) — a lost or compromised admin key is permanent
 <!-- handsoff-issue-1141 -->
 - #1141: [SC-136] multisig-approval: `execute()` only marks proposals `Expired`, and approved proposals never move funds
 

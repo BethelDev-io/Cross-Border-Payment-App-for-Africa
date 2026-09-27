@@ -90,6 +90,59 @@ fn test_attest_after_revoke_succeeds() {
     assert!(client.is_verified(&user, KycTier::Basic));
 }
 
+#[test]
+fn test_reattest_after_revoke_records_new_attested_at() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+    client.attest(&admin, &user, KycTier::Basic, &hash(&env), 0);
+    let first_attested_at = client.get_attestation(&user, KycTier::Basic).attested_at;
+
+    env.ledger().with_mut(|li| li.timestamp += 100);
+    client.revoke(&admin, &user, KycTier::Basic);
+
+    env.ledger().with_mut(|li| li.timestamp += 100);
+    client.attest(&admin, &user, KycTier::Basic, &hash(&env), 0);
+
+    let record = client.get_attestation(&user, KycTier::Basic);
+    assert!(record.attested_at > first_attested_at);
+    assert_eq!(record.revoked_at, 0);
+}
+
+#[test]
+fn test_reattest_after_revoke_preserves_revocation_evidence() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+    client.attest(&admin, &user, KycTier::Basic, &hash(&env), 0);
+
+    env.ledger().with_mut(|li| li.timestamp += 100);
+    client.revoke(&admin, &user, KycTier::Basic);
+    let revoked_at = client.get_attestation(&user, KycTier::Basic).revoked_at;
+
+    env.ledger().with_mut(|li| li.timestamp += 100);
+    client.attest(&admin, &user, KycTier::Basic, &hash(&env), 0);
+
+    let record = client.get_attestation(&user, KycTier::Basic);
+    assert_eq!(record.revocation_count, 1);
+    assert_eq!(record.last_revoked_at, revoked_at);
+}
+
+#[test]
+fn test_reattest_after_expiry_records_new_attested_at() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+    // expires_at = 1000
+    client.attest(&admin, &user, KycTier::Basic, &hash(&env), 1000);
+    let first_attested_at = client.get_attestation(&user, KycTier::Basic).attested_at;
+
+    env.ledger().with_mut(|li| li.timestamp += 2000);
+    assert!(!client.is_verified(&user, KycTier::Basic));
+
+    client.attest(&admin, &user, KycTier::Basic, &hash(&env), 0);
+    let record = client.get_attestation(&user, KycTier::Basic);
+    assert!(record.attested_at > first_attested_at);
+    assert!(client.is_verified(&user, KycTier::Basic));
+}
+
 // ── revoke ────────────────────────────────────────────────────────────────────
 
 #[test]
