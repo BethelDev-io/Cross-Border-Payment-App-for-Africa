@@ -463,3 +463,6 @@ MIT
 
 <!-- handsoff-issue-1124 -->
 - #1124: [SC-119] escrow: `deposit` bypasses `MAX_ESCROW_AMOUNT`, is allowed after delivery confirmation, and accepts deposits from any address
+
+<!-- handsoff-issue-1125 -->
+- #1125: [SC-120] No contract supports admin key rotation (except agent-escrow's unauthenticated one) — a lost or compromised admin key is permanent
