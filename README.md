@@ -466,3 +466,16 @@ MIT
 
 <!-- handsoff-issue-1135 -->
 - #1135: [SC-130] fee-distributor: `update_fee_rate` stores a value nothing can read, and there are no getters for the fee rate or split
+<!-- handsoff-issue-1129 -->
+- #1129: [SC-124] dispute-resolution: disputes in `UnderAppeal` have no deadline — if the super-arbitrator never acts, funds are locked forever
+
+<!-- handsoff-issue-1133 -->
+- #1133: [SC-128] agent-escrow: `insurance_payout` can be called repeatedly for the same cancelled escrow and pays senders who were already refunded
+<!-- handsoff-issue-1127 -->
+- #1127: [SC-122] dispute-resolution: `settle_filing_fee` pays out the *current* filing fee, not the fee actually paid when the dispute was opened
+
+<!-- handsoff-issue-1128 -->
+- #1128: [SC-123] dispute-resolution: `claim_expired` never refunds or settles the filing fee, stranding it in the contract
+
+<!-- handsoff-issue-1130 -->
+- #1130: [SC-125] dispute-resolution: panel quorum is computed against the *current* panel size, so adding/removing arbitrators mid-dispute changes outcomes
