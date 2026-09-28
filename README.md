@@ -503,3 +503,6 @@ MIT
 
 <!-- handsoff-issue-1130 -->
 - #1130: [SC-125] dispute-resolution: panel quorum is computed against the *current* panel size, so adding/removing arbitrators mid-dispute changes outcomes
+
+<!-- handsoff-issue-1202 -->
+- #1202: [FE-114] Send Money's trustline pre-check calls a non-existent endpoint and silently hides the "no trustline" warning
