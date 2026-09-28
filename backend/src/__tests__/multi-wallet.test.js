@@ -154,6 +154,46 @@ describe('POST /api/wallet/create', () => {
 });
 
 // ---------------------------------------------------------------------------
+// PUT /api/wallet/default
+// ---------------------------------------------------------------------------
+
+describe('PUT /api/wallet/default', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    db.pool.connect.mockReset();
+  });
+  afterEach(() => {
+    db.pool.connect.mockReset();
+  });
+
+  it('changes the default wallet for the authenticated user', async () => {
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ id: 'cccccccc-0000-4000-8000-000000000002' }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ ...WALLET_1, id: 'cccccccc-0000-4000-8000-000000000002', is_default: true }] }),
+      release: jest.fn(),
+    };
+    db.pool.connect.mockResolvedValue(client);
+
+    const res = await request(app)
+      .put('/api/wallet/default')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ wallet_id: 'cccccccc-0000-4000-8000-000000000002' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.wallet.is_default).toBe(true);
+    expect(client.query).toHaveBeenCalledWith(
+      'UPDATE wallets SET is_default = false WHERE user_id = $1',
+      [USER_ID],
+    );
+    expect(client.query).toHaveBeenCalledWith('COMMIT');
+    expect(client.release).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/wallet/list
 // ---------------------------------------------------------------------------
 
