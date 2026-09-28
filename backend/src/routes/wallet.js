@@ -6,6 +6,7 @@ const {
   getWallet,
   listWallets,
   createWalletHandler,
+  setDefaultWallet,
   getQRCode,
   getWalletTransactions,
   exportKey,
@@ -44,6 +45,12 @@ router.post(
   [body('label').optional().trim().isLength({ max: 100 }).withMessage('Label must be at most 100 characters')],
   validate,
   createWalletHandler,
+);
+router.put(
+  '/default',
+  [body('wallet_id').notEmpty().isUUID().withMessage('wallet_id must be a valid UUID')],
+  validate,
+  setDefaultWallet,
 );
 
 // Single-wallet endpoints (support optional ?wallet_id query param)
