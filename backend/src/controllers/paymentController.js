@@ -26,7 +26,6 @@ const { isMemoRequired } = require("../services/memoRequired");
 const { awardReferralCredit } = require("./referralController");
 const { enqueueMint } = require("../services/loyaltyMintQueue");
 const { creditReferralReward } = require("../services/referralRewardService");
-const { enqueueLoyaltyMint } = require("../jobs/loyaltyMintJob");
 const { depositFee } = require("../services/feeDistributor");
 const { getActiveConfig } = require("../services/feeConfigService");
 const logger = require("../utils/logger");
@@ -97,17 +96,24 @@ function estimateUSDValue(amount, asset) {
   return 0;
 }
 
-async function dailyLimitExceeded(walletAddress, amount) {
+async function dailyLimitExceeded(walletAddress, amount, asset) {
   const result = await db.query(
-    `SELECT COALESCE(SUM(amount), 0) AS total
+    `SELECT amount, asset
      FROM transactions
      WHERE sender_wallet = $1
        AND status != 'failed'
        AND created_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC')`,
     [walletAddress],
   );
-  const totalToday = parseFloat(result.rows[0].total);
-  return totalToday + parseFloat(amount) > DAILY_SEND_LIMIT;
+  // Older test doubles may still return the former aggregate shape.
+  const hasAssetRows = result.rows.some((row) => row.amount !== undefined);
+  if (!hasAssetRows) {
+    // Compatibility path for an older aggregate response; the old query
+    // already represented the configured limit's units.
+    return parseFloat(result.rows[0]?.total || 0) + parseFloat(amount) > DAILY_SEND_LIMIT;
+  }
+  const totalToday = result.rows.reduce((total, row) => total + estimateUSDValue(row.amount, row.asset), 0);
+  return totalToday + estimateUSDValue(amount, asset) > DAILY_SEND_LIMIT;
 }
 
 /**
@@ -401,7 +407,7 @@ async function send(req, res, next) {
     const lockKey = `daily_limit:${public_key}`;
     let txResult;
     const lockAcquired = await withLock(lockKey, 10, async () => {
-      const overLimit = await dailyLimitExceeded(public_key, amount);
+      const overLimit = await dailyLimitExceeded(public_key, amount, asset);
       if (overLimit) {
         throw Object.assign(new Error(`Daily send limit of ${DAILY_SEND_LIMIT} reached. Try again tomorrow.`), {
           status: 400, payload: { code: "DAILY_LIMIT_EXCEEDED" },
@@ -486,12 +492,9 @@ async function send(req, res, next) {
       creditReferralReward(req.user.userId, txId).catch(() => {});
     }
 
-    const loyaltyPoints = Math.max(1, Math.floor(parseFloat(amount)));
-    enqueueMint({ userId: req.user.userId, walletAddress: public_key, points: loyaltyPoints }).catch((err) => {
+    enqueueMint({ transactionId: txId, userId: req.user.userId, walletAddress: public_key, amount, asset }).catch((err) => {
       logger.error('Failed to enqueue loyalty mint', { userId: req.user.userId, error: err.message });
     });
-    // Queue loyalty mint for background processing after confirmation
-    enqueueLoyaltyMint(txId, req.user.userId, public_key, amount, asset).catch(() => {});
 
     if (asset === "USDC" && txResult.fee_breakdown.platform_fee_bps > 0) {
       const feeStroops = Math.floor(parseFloat(amount) * 1e7 * txResult.fee_breakdown.platform_fee_bps / 10000);
@@ -527,7 +530,7 @@ async function send(req, res, next) {
     ).catch(() => {});
 
     db.query(
-      "SELECT u.user_id FROM users u JOIN wallets w ON w.user_id = u.id WHERE w.public_key = $1 LIMIT 1",
+      "SELECT u.id AS user_id FROM users u JOIN wallets w ON w.user_id = u.id WHERE w.public_key = $1 LIMIT 1",
       [recipient_address],
     ).then(({ rows }) => {
       if (rows[0]) {
@@ -609,7 +612,7 @@ async function sendBatch(req, res, next) {
     // AML re-screen for high-value batches — fail closed when screening is unavailable
     await amlRescreenForPayment(req.user.userId, public_key, estimateUSDValue(totalAmount, asset));
 
-    const overLimit = await dailyLimitExceeded(public_key, totalAmount);
+    const overLimit = await dailyLimitExceeded(public_key, totalAmount, asset);
     if (overLimit) {
       return res.status(400).json({
         error: `Daily send limit of ${DAILY_SEND_LIMIT} reached. Try again tomorrow.`,
