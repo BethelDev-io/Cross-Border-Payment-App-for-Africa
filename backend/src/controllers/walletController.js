@@ -204,6 +204,45 @@ async function createWalletHandler(req, res, next) {
 }
 
 // ---------------------------------------------------------------------------
+// PUT /wallet/default
+// Body: { wallet_id: UUID }
+// ---------------------------------------------------------------------------
+async function setDefaultWallet(req, res, next) {
+  const client = await db.pool.connect();
+  try {
+    const { wallet_id: walletId } = req.body;
+    if (!walletId) return res.status(400).json({ error: 'wallet_id is required' });
+
+    await client.query('BEGIN');
+    const walletResult = await client.query(
+      'SELECT id FROM wallets WHERE id = $1 AND user_id = $2',
+      [walletId, req.user.userId],
+    );
+    if (!walletResult.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+
+    await client.query('UPDATE wallets SET is_default = false WHERE user_id = $1', [req.user.userId]);
+    const updated = await client.query(
+      `UPDATE wallets
+       SET is_default = true
+       WHERE id = $1 AND user_id = $2
+       RETURNING id, public_key, label, is_default, created_at`,
+      [walletId, req.user.userId],
+    );
+    await client.query('COMMIT');
+    audit.log(req.user.userId, 'wallet_default_changed', req.ip, req.headers['user-agent'], { wallet_id: walletId });
+    return res.json({ wallet: updated.rows[0] });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* preserve original error */ }
+    return next(err);
+  } finally {
+    client.release();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // GET /wallet/qr  (optionally ?wallet_id=<uuid>)
 // ---------------------------------------------------------------------------
 async function getQRCode(req, res, next) {
@@ -554,7 +593,7 @@ async function getWalletFlags(req, res, next) {
   }
 }
 
-module.exports = { getWallet, getQRCode, getWalletTransactions, exportKey, upgradeToBusinessAccount, addSigner, removeSigner, listSigners, listTrustlines, addTrustlineHandler, removeTrustlineHandler, mergeWallet, listDataEntries, setEntry, deleteEntry, ALLOWED_KEYS };
+module.exports = { getWallet, getQRCode, getWalletTransactions, exportKey, upgradeToBusinessAccount, addSigner, removeSigner, listSigners, listTrustlines, addTrustlineHandler, removeTrustlineHandler, mergeWallet, setDefaultWallet, listDataEntries, setEntry, deleteEntry, ALLOWED_KEYS };
 
 async function mergeWallet(req, res, next) {
   try {
@@ -665,6 +704,7 @@ module.exports = {
   getWallet,
   listWallets,
   createWalletHandler,
+  setDefaultWallet,
   getQRCode,
   getWalletTransactions,
   exportKey,
