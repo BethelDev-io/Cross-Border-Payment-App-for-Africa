@@ -503,3 +503,6 @@ MIT
 
 <!-- handsoff-issue-1130 -->
 - #1130: [SC-125] dispute-resolution: panel quorum is computed against the *current* panel size, so adding/removing arbitrators mid-dispute changes outcomes
+
+<!-- handsoff-issue-1140 -->
+- #1140: [SC-135] loyalty-token: `redeem` burns points but records no entitlement or event, so the backend cannot verify a discount was paid for
